@@ -1,0 +1,367 @@
+import pygame
+import random
+import os
+import time # Import time for precise timing
+
+# Initialize Pygame
+pygame.init()
+
+# --- Constants ---
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+GRID_SIZE = 20
+SNAKE_COLOR_HEAD = (0, 150, 0)
+SNAKE_COLOR_BODY = (0, 200, 0)
+FOOD_COLOR_RED = (255, 0, 0)      # Regular food (red circle)
+FOOD_COLOR_BLUE = (0, 0, 255)     # Shield power-up (blue square)
+BACKGROUND_COLOR = (0, 0, 0)
+TEXT_COLOR = (255, 255, 255)
+BUTTON_COLOR = (50, 50, 50)
+BUTTON_HOVER_COLOR = (100, 100, 100)
+BUTTON_TEXT_COLOR = (255, 255, 255)
+SHIELD_ACTIVE_COLOR = (100, 100, 255) # Color hint when shield is active
+
+HIGH_SCORE_FILE = "highscore.txt"
+
+# --- Game States ---
+START_SCREEN = 0
+LEVEL_SELECT = 1
+PLAYING = 2
+PAUSED = 3
+GAME_OVER = 4
+
+# --- Setup the display ---
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("PySnake Game")
+
+# --- Fonts ---
+font_small = pygame.font.Font(None, 25)
+font_medium = pygame.font.Font(None, 40)
+font_large = pygame.font.Font(None, 60)
+font_title = pygame.font.Font(None, 80)
+
+# --- Game State Variables ---
+game_state = START_SCREEN
+snake = []
+snake_direction = (0, 0)
+red_food_pos = (0, 0) # Position for the red circle food
+blue_food_pos = None # Position for the blue square food (None if not present)
+score = 0
+high_score = 0
+level = 0
+current_speed = 0
+base_speed = 10 # Base FPS, adjusted by level multiplier
+speed_multipliers = {
+    "Easy": 0.8,
+    "Medium": 1.0,
+    "Hard": 1.2
+}
+shield_active = False
+shield_start_time = 0 # When the shield was activated
+blue_food_spawn_time = 0 # When the blue food was spawned
+BLUE_FOOD_DURATION = 8 # Seconds blue food stays on screen
+SHIELD_POWER_DURATION = 15 # Seconds shield power lasts
+
+# --- Functions ---
+
+def load_high_score():
+    global high_score
+    if os.path.exists(HIGH_SCORE_FILE):
+        with open(HIGH_SCORE_FILE, "r") as file:
+            try:
+                high_score = int(file.read())
+            except ValueError:
+                high_score = 0
+    else:
+        high_score = 0
+
+def save_high_score():
+    with open(HIGH_SCORE_FILE, "w") as file:
+        file.write(str(high_score))
+
+def reset_game():
+    global snake, snake_direction, red_food_pos, blue_food_pos, score, current_speed, game_state, shield_active, shield_start_time, blue_food_spawn_time
+    snake = []
+    # Starting size of snake is 4 circles
+    start_x = SCREEN_WIDTH // 2
+    start_y = SCREEN_HEIGHT // 2
+    for i in range(4): # Create 4 segments
+        snake.append((start_x - i * GRID_SIZE, start_y)) # Snake body extends to the left
+    
+    snake_direction = (GRID_SIZE, 0) # Start moving right
+    place_red_food()
+    blue_food_pos = None # No blue food at start
+    score = 0
+    shield_active = False
+    shield_start_time = 0
+    blue_food_spawn_time = 0
+
+    if level == 0: current_speed = base_speed * speed_multipliers["Easy"]
+    elif level == 1: current_speed = base_speed * speed_multipliers["Medium"]
+    else: current_speed = base_speed * speed_multipliers["Hard"]
+    game_state = PLAYING
+
+def place_food_at_random_grid_pos():
+    """Helper to find a random, empty grid position."""
+    while True:
+        x = random.randrange(0, SCREEN_WIDTH // GRID_SIZE) * GRID_SIZE
+        y = random.randrange(0, SCREEN_HEIGHT // GRID_SIZE) * GRID_SIZE
+        # Ensure food doesn't spawn on the snake or other food
+        if (x, y) not in snake and (x,y) != red_food_pos and (x,y) != blue_food_pos:
+            return (x, y)
+
+def place_red_food():
+    global red_food_pos
+    red_food_pos = place_food_at_random_grid_pos()
+
+def place_blue_food():
+    global blue_food_pos, blue_food_spawn_time
+    if blue_food_pos is None: # Only spawn if not already present
+        blue_food_pos = place_food_at_random_grid_pos()
+        blue_food_spawn_time = time.time() # Record spawn time
+
+def draw_snake():
+    # If shield is active, make snake slightly brighter or different color
+    current_head_color = SNAKE_COLOR_HEAD
+    current_body_color = SNAKE_COLOR_BODY
+    if shield_active:
+        current_head_color = (200, 200, 255) # Light blueish head
+        current_body_color = (150, 150, 255) # Light blueish body
+
+    for i, segment in enumerate(snake):
+        if i == 0: # Head
+             pygame.draw.circle(screen, current_head_color,
+                                (segment[0] + GRID_SIZE // 2, segment[1] + GRID_SIZE // 2),
+                                GRID_SIZE // 2)
+        else: # Body segments
+            pygame.draw.circle(screen, current_body_color,
+                               (segment[0] + GRID_SIZE // 2, segment[1] + GRID_SIZE // 2),
+                               GRID_SIZE // 2 - 1)
+
+def draw_food():
+    # Draw red circle food
+    pygame.draw.circle(screen, FOOD_COLOR_RED,
+                       (red_food_pos[0] + GRID_SIZE // 2, red_food_pos[1] + GRID_SIZE // 2),
+                       GRID_SIZE // 2)
+
+    # Draw blue square food if present
+    if blue_food_pos:
+        pygame.draw.rect(screen, FOOD_COLOR_BLUE,
+                         (blue_food_pos[0], blue_food_pos[1], GRID_SIZE, GRID_SIZE))
+
+def draw_text(text, font, color, x, y, center=False):
+    text_surface = font.render(text, True, color)
+    if center:
+        text_rect = text_surface.get_rect(center=(x, y))
+        screen.blit(text_surface, text_rect)
+    else:
+        screen.blit(text_surface, (x, y))
+    return text_surface.get_rect(topleft=(x, y)) if not center else text_surface.get_rect(center=(x,y))
+
+def draw_button(rect, text, font, base_color, hover_color, text_color, mouse_pos):
+    current_color = hover_color if rect.collidepoint(mouse_pos) else base_color
+    pygame.draw.rect(screen, current_color, rect, border_radius=5)
+    draw_text(text, font, text_color, rect.centerx, rect.centery, center=True)
+
+def update_game_state():
+    global snake, snake_direction, score, game_state, high_score, current_speed, level, shield_active, shield_start_time, blue_food_pos, blue_food_spawn_time
+
+    # Handle shield power-up duration
+    if shield_active and (time.time() - shield_start_time > SHIELD_POWER_DURATION):
+        shield_active = False
+        print("Shield deactivated!")
+
+    # Handle blue food despawn
+    if blue_food_pos and (time.time() - blue_food_spawn_time > BLUE_FOOD_DURATION):
+        blue_food_pos = None # Remove blue food
+        blue_food_spawn_time = 0 # Reset timer for next spawn
+        print("Blue food disappeared!")
+
+
+    head_x, head_y = snake[0]
+    new_head = (head_x + snake_direction[0], head_y + snake_direction[1])
+
+    # Collision with walls
+    if not (0 <= new_head[0] < SCREEN_WIDTH and 0 <= new_head[1] < SCREEN_HEIGHT):
+        if shield_active:
+            # If shield is active, teleport to opposite side (simple warp)
+            if new_head[0] < 0: new_head = (SCREEN_WIDTH - GRID_SIZE, new_head[1])
+            elif new_head[0] >= SCREEN_WIDTH: new_head = (0, new_head[1])
+            elif new_head[1] < 0: new_head = (new_head[0], SCREEN_HEIGHT - GRID_SIZE)
+            elif new_head[1] >= SCREEN_HEIGHT: new_head = (new_head[0], 0)
+            print("Wall hit, shield active! Warping.")
+        else:
+            game_state = GAME_OVER
+            return
+
+    # Collision with self
+    if new_head in snake[1:]:
+        if not shield_active: # Only game over if shield is NOT active
+            game_state = GAME_OVER
+            return
+        else:
+            print("Self-collision, shield active! Ignoring.")
+
+
+    snake.insert(0, new_head)
+
+    # Collision with red food
+    if new_head == red_food_pos:
+        score += 1
+        if score > high_score:
+            high_score = score
+        place_red_food()
+        if score % 5 == 0 and score != 0:
+            current_speed += 1.5
+            # Maybe spawn blue food after a certain score or randomly
+            if random.randint(1, 3) == 1: # 1 in 3 chance to spawn blue food after eating red food
+                place_blue_food()
+    # Collision with blue food
+    elif new_head == blue_food_pos:
+        shield_active = True
+        shield_start_time = time.time() # Record activation time
+        blue_food_pos = None # Remove blue food
+        blue_food_spawn_time = 0 # Reset spawn timer
+        print("Shield activated!")
+    else:
+        snake.pop()
+
+# --- Main Game Loop ---
+load_high_score()
+
+clock = pygame.time.Clock()
+
+running = True
+while running:
+    mouse_pos = pygame.mouse.get_pos()
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        if event.type == pygame.KEYDOWN:
+            if game_state == PLAYING:
+                if event.key == pygame.K_UP and snake_direction != (0, GRID_SIZE):
+                    snake_direction = (0, -GRID_SIZE)
+                elif event.key == pygame.K_DOWN and snake_direction != (0, -GRID_SIZE):
+                    snake_direction = (0, GRID_SIZE)
+                elif event.key == pygame.K_LEFT and snake_direction != (GRID_SIZE, 0):
+                    snake_direction = (-GRID_SIZE, 0)
+                elif event.key == pygame.K_RIGHT and snake_direction != (-GRID_SIZE, 0):
+                    snake_direction = (GRID_SIZE, 0)
+                elif event.key == pygame.K_p:
+                    game_state = PAUSED
+            elif game_state == PAUSED:
+                if event.key == pygame.K_p:
+                    game_state = PLAYING
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if game_state == START_SCREEN:
+                start_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 + 50, 150, 50)
+                if start_button_rect.collidepoint(mouse_pos):
+                    game_state = LEVEL_SELECT
+
+            elif game_state == LEVEL_SELECT:
+                easy_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 - 60, 150, 50)
+                medium_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2, 150, 50)
+                hard_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 + 60, 150, 50)
+
+                if easy_button_rect.collidepoint(mouse_pos):
+                    level = 0
+                    reset_game()
+                elif medium_button_rect.collidepoint(mouse_pos):
+                    level = 1
+                    reset_game()
+                elif hard_button_rect.collidepoint(mouse_pos):
+                    level = 2
+                    reset_game()
+
+            elif game_state == PAUSED:
+                continue_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 - 30, 150, 50)
+                if continue_button_rect.collidepoint(mouse_pos):
+                    game_state = PLAYING
+
+            elif game_state == GAME_OVER:
+                play_again_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, SCREEN_HEIGHT // 2 + 40, 200, 50)
+                quit_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, SCREEN_HEIGHT // 2 + 100, 200, 50)
+
+                if play_again_button_rect.collidepoint(mouse_pos):
+                    game_state = LEVEL_SELECT
+                    load_high_score()
+                elif quit_button_rect.collidepoint(mouse_pos):
+                    running = False
+
+    # --- Game State Logic ---
+    if game_state == PLAYING:
+        update_game_state()
+
+    # --- Rendering ---
+    screen.fill(BACKGROUND_COLOR)
+
+    if game_state == START_SCREEN:
+        draw_text("PYSNAKE", font_title, TEXT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50, center=True)
+        start_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 + 50, 150, 50)
+        draw_button(start_button_rect, "START", font_medium, BUTTON_COLOR, BUTTON_HOVER_COLOR, BUTTON_TEXT_COLOR, mouse_pos)
+
+    elif game_state == LEVEL_SELECT:
+        draw_text("CHOOSE DIFFICULTY", font_large, TEXT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 120, center=True)
+        easy_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 - 60, 150, 50)
+        medium_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2, 150, 50)
+        hard_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 + 60, 150, 50)
+
+        draw_button(easy_button_rect, "EASY", font_medium, BUTTON_COLOR, BUTTON_HOVER_COLOR, BUTTON_TEXT_COLOR, mouse_pos)
+        draw_button(medium_button_rect, "MEDIUM", font_medium, BUTTON_COLOR, BUTTON_HOVER_COLOR, BUTTON_TEXT_COLOR, mouse_pos)
+        draw_button(hard_button_rect, "HARD", font_medium, BUTTON_COLOR, BUTTON_HOVER_COLOR, BUTTON_TEXT_COLOR, mouse_pos)
+
+    elif game_state == PLAYING or game_state == PAUSED or game_state == GAME_OVER:
+        draw_snake()
+        draw_food()
+
+        level_name = ["EASY", "MEDIUM", "HARD"][level]
+        draw_text(f"Score: {score}", font_small, TEXT_COLOR, 10, 10)
+        draw_text(f"High Score: {high_score}", font_small, TEXT_COLOR, 10, 30)
+        draw_text(f"Level: {level_name}", font_small, TEXT_COLOR, 10, 50)
+
+        # Display shield status and remaining time
+        if shield_active:
+            time_left = max(0, SHIELD_POWER_DURATION - (time.time() - shield_start_time))
+            draw_text(f"SHIELD ACTIVE! ({int(time_left)}s)", font_small, SHIELD_ACTIVE_COLOR, SCREEN_WIDTH - 180, 10)
+
+
+        if game_state == PAUSED:
+            s = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            s.fill((0, 0, 0, 128))
+            screen.blit(s, (0,0))
+
+            draw_text("PAUSED", font_large, TEXT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 80, center=True)
+            continue_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 75, SCREEN_HEIGHT // 2 - 30, 150, 50)
+            draw_button(continue_button_rect, "CONTINUE", font_medium, BUTTON_COLOR, BUTTON_HOVER_COLOR, BUTTON_TEXT_COLOR, mouse_pos)
+            draw_text("Press 'P' to Toggle Pause", font_small, TEXT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 30, center=True)
+
+
+        elif game_state == GAME_OVER:
+            save_high_score()
+
+            s = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            s.fill((0, 0, 0, 128))
+            screen.blit(s, (0,0))
+
+            draw_text("GAME OVER!", font_large, TEXT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 80, center=True)
+            draw_text(f"Your Score: {score}", font_medium, TEXT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 20, center=True)
+
+            play_again_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, SCREEN_HEIGHT // 2 + 40, 200, 50)
+            quit_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, SCREEN_HEIGHT // 2 + 100, 200, 50)
+
+            draw_button(play_again_button_rect, "PLAY AGAIN", font_medium, BUTTON_COLOR, BUTTON_HOVER_COLOR, BUTTON_TEXT_COLOR, mouse_pos)
+            draw_button(quit_button_rect, "QUIT", font_medium, BUTTON_COLOR, BUTTON_HOVER_COLOR, BUTTON_TEXT_COLOR, mouse_pos)
+
+
+    pygame.display.flip()
+
+    if game_state == PLAYING:
+        clock.tick(current_speed)
+    else:
+        clock.tick(30)
+
+save_high_score()
+pygame.quit()
